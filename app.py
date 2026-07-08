@@ -1,95 +1,93 @@
-from flask import Flask, request, jsonify 
-from flask_sqlalchemy import SQLAlchemy
+from flask import Flask, request, jsonify
+from pymongo import MongoClient
+from bson.objectid import ObjectId
 
-# Initialize Flask app and configure database
 app = Flask(__name__)
-app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///students.db"
-app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
-# Creating Flask app
-db = SQLAlchemy(app)
-#Modelling the table
-class Student(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(100), nullable=False)
-    age = db.Column(db.Integer, nullable=False)
-    course = db.Column(db.String(100), nullable=False)
+# Connect to MongoDB
+client = MongoClient("mongodb://localhost:27017/")
+
+db = client["student_db"]
+
+students = db["students"]
+
+@app.route("/")
+def home():
+    return "Welcome to Student API (MongoDB)"
 
 
 #POST API
 @app.route("/students", methods=["POST"])
 def add_student():
+
     data = request.get_json()
 
-    student = Student(
-        name=data["name"],
-        age=data["age"],
-        course=data["course"]
-    )
+    student = {
+        "name": data["name"],
+        "age": data["age"],
+        "course": data["course"]
+    }
 
-    db.session.add(student)
-    db.session.commit()
+    result = students.insert_one(student)
 
-    return jsonify({"message": "Student added successfully"}), 201
-
+    return jsonify({
+        "message": "Student added successfully",
+        "id": str(result.inserted_id)
+    }), 201
 
 #GET API
 @app.route("/students", methods=["GET"])
 def get_students():
-    students = Student.query.all()
 
-    result = []
+    data = []
 
-    for student in students:
-        result.append({
-            "id": student.id,
-            "name": student.name,
-            "age": student.age,
-            "course": student.course
+    for student in students.find():
+
+        data.append({
+            "id": str(student["_id"]),
+            "name": student["name"],
+            "age": student["age"],
+            "course": student["course"]
         })
 
-    return jsonify(result), 200
+    return jsonify(data)
+
+
+
 # UPDATE API
-@app.route("/students/<int:id>", methods=["PUT"])
+@app.route("/students/<id>", methods=["PUT"])
 def update_student(id):
-    student = Student.query.get_or_404(id)
 
     data = request.get_json()
 
-    if "name" in data:
-        student.name = data["name"]
+    result = students.update_one(
+        {"_id": ObjectId(id)},
+        {
+            "$set": {
+                "name": data["name"],
+                "age": data["age"],
+                "course": data["course"]
+            }
+        }
+    )
 
-    if "age" in data:
-        student.age = data["age"]
-
-    if "course" in data:
-        student.course = data["course"]
-
-    db.session.commit()
+    if result.matched_count == 0:
+        return jsonify({"message": "Student not found"}), 404
 
     return jsonify({"message": "Student updated successfully"})
 
-
 # DELETE API
-@app.route("/students/<int:id>", methods=["DELETE"])
+@app.route("/students/<id>", methods=["DELETE"])
 def delete_student(id):
-    student = Student.query.get_or_404(id)
 
-    db.session.delete(student)
-    db.session.commit()
+    result = students.delete_one(
+        {"_id": ObjectId(id)}
+    )
+
+    if result.deleted_count == 0:
+        return jsonify({"message": "Student not found"}), 404
 
     return jsonify({"message": "Student deleted successfully"})
-    
 
-#  Main Page
-@app.route("/")
-def home():
-    return "Welcome to Student API"
-
-
-# Create Database
 if __name__ == "__main__":
-    with app.app_context():
-        db.create_all()
-
-    app.run(debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=True)
